@@ -14,4 +14,9 @@ std::string flow_key(const uint8_t* sip, uint16_t sport,
 // optional: small MAC printer for the demo
 void print_mac(const uint8_t* p);
 
+// classify private/local IPs and format percentages
+bool is_private_ipv4(const uint8_t* p);
+bool is_private_ipv4_str(const std::string& s);
+std::string percent_string(std::uint64_t part, std::uint64_t whole);
+
 } // namespace netscope
