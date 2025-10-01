@@ -1,309 +1,235 @@
----
+# NetScope — Wi-Fi Hog Finder (C++/libpcap)
 
-# NetScope Starter (Beginner-Friendly)
+## What problem does this solve?
 
-## What problem does it solve?
+When the network “feels slow,” you don’t know **what** is eating bandwidth. Is it a browser download, a cloud-sync upload, or something else?
+**NetScope** gives a quick, human-readable answer from real traffic — not guesses.
 
-When the network “feels slow,” you usually don’t know why. Is it your Wi-Fi? DNS? A single app hogging bandwidth? A flaky server?
-**NetScope** gives a quick, human-readable answer from real traffic—not guesses.
+## What it does (MVP)
 
-## What it actually accomplishes (MVP)
+* **Reads a `.pcap`** (packet capture file) and decodes Ethernet → IPv4 → TCP/UDP.
+* Prints **Top Talkers** (which IP sent the most bytes) and **Top Flows** (which connection moved the most bytes).
+* Shows **percentages** and a one-line **Verdict** (likely **upload** vs **download** heavy) with a simple action you can take.
+* **DNS labeling:** if DNS responses are in the same capture, flows display **IP (domain)** (e.g., `23.215.0.136 (akamaiedge.net)`), so it’s obvious which site/app is responsible.
 
-In 60–90 seconds of observation, it prints a short diagnosis:
-
-* **Top talkers & flows:** “What device/app is using most bandwidth right now?”
-* **Connection health signals:**
-
-  * **Handshake RTT** (time to first response) → rough latency to services
-  * **Retransmits / SYN-without-ACK** → congestion or unreachable services
-* **Simple verdicts:** “Zoom is fine; OneDrive is saturating upload,” or “High SYN failures to api.example.com—service likely down or blocked.”
-
-This turns raw bytes → actionable hints a person can act on (pause a sync, switch AP, check ISP, or open a firewall).
-
-## Concrete real-world uses
-
-* **Home/Student:** “Why is my Wi-Fi laggy?” Find the bandwidth hog in seconds.
-* **TA/IT helpdesk:** Quick triage during office hours or lab classes.
-* **Dev/QA:** After a deploy, verify service reachability/latency without heavy tools.
-* **Edge/Embedded vibe:** Run on a tiny VM or Pi to watch traffic headlessly.
-
-## Why not just use Wireshark?
-
-Wireshark is amazing but heavy and verbose. **NetScope** is:
-
-* **Targeted** (just the KPIs you care about)
-* **Headless/Scriptable** (CI, SSH, servers)
-* **Small C++ codebase** you can reason about (great for learning + interviews)
+> Works great for quick triage: “Pause OneDrive upload”, “Stop the big download”, or “No single hog—check Wi-Fi/ISP.”
 
 ---
 
-## Starter program (what this repo includes first)
+## How it works
 
-This tiny C++ program decodes a **single** Ethernet → IPv4 → TCP packet from a hard-coded byte array.
-It prints human-readable fields (MACs, IPs, ports, flags). This is the first stepping stone toward a simple network analyzer.
+1. You record a short capture (30–60s) during the slowdown.
+2. NetScope reads headers (IPs, ports, sizes) — no decryption — and totals bytes per IP/flow.
+3. It prints a compact report with percentages and a verdict.
 
 ---
 
-## Setup
+## Repository layout
 
-### For setting up WSL in your project/github folder
-
-```bash
-wsl --install -d Ubuntu
 ```
-
-### Inside WSL
-
-```bash
-sudo apt update
-sudo apt install -y build-essential cmake
+NetScope/
+├─ CMakeLists.txt            # builds a tiny library + two apps
+├─ README.md
+├─ include/
+│  └─ netscope/
+│     ├─ packet.hpp          # 1 tiny data struct shared by all modules
+│     ├─ parser.hpp          # "bytes -> Packet" (Ethernet/IPv4/TCP/UDP)
+│     ├─ stats.hpp           # update counters + print Top Talkers/Flows
+│     ├─ util.hpp            # helpers: IP formatting, flow keys, human bytes
+|     └─ dns.hpp             # tiny DNS cache (IP -> domain) from DNS responses
+├─ src/
+│  ├─ parser.cpp             # implementation of parser.hpp
+│  ├─ stats.cpp              # implementation of stats.hpp
+│  ├─ util.cpp               # implementation of util.hpp (small helpers)
+|  └─ dns.cpp                # implementation of dns.hpp
+└─ app/
+   ├─ netscope_cli.cpp       # main tool: read .pcap, use parser + stats
+   └─ decode_one.cpp         # the tiny “one hard-coded packet” demo
 ```
-
 ---
 
-## Building in WSL (with source on your Windows drive)
+## Requirements
 
-> **If you try to run `cmake ..` on a Windows drive:**
-> You ran CMake inside a folder that lives on your Windows drive (`/mnt/e/...`). On WSL, Windows drives are mounted with special options that sometimes block certain file ops CMake does when it “generates” build files (e.g., `configure_file`, changing metadata/timestamps). Result: CMake can’t write the files it needs → configure step fails → no Makefile → nothing builds.
+* Linux/WSL or Ubuntu (Debian-based).
+* Packages: `build-essential`, `cmake`, `libpcap-dev`, `tcpdump`
 
-**Solution (generate/build in Linux home):**
+  ```bash
+  sudo apt update
+  sudo apt install -y build-essential cmake libpcap-dev tcpdump
+  ```
+* (For Windows traffic) Wireshark + **Npcap** on Windows to capture and save a `.pcap`.
 
-```bash
-mkdir -p ~/netscope_build
-cd ~/netscope_build
-
-cmake /mnt/e/Coding-practice/Projects/NetScope
-cmake --build . -j
-./decode_one
-```
-
-### What you just did (in plain words)
-
-* Your **source code** lives on Windows: `/mnt/e/Coding-practice/Projects/NetScope`
-* You created a **build folder** in Linux (WSL) home: `~/netscope_build`
-* You told CMake: “**Read** the sources from the Windows folder, but **write** all build files (Makefiles, the compiled program) here in Linux.”
-
-**Commands you ran:**
-
-* `cmake /mnt/e/.../NetScope`
-  → CMake read `CMakeLists.txt` from the Windows path and generated build files in `~/netscope_build`.
-* `cmake --build . -j`
-  → Used those build files to compile your code with g++.
-  → Output: the executable `./decode_one` ended up in `~/netscope_build`.
-* `./decode_one`
-  → You ran the compiled program, which printed the Ethernet/IP/TCP fields.
-
-This worked because writing build files on Windows-mounted drives can hit permission quirks in WSL; writing them in Linux home avoids that.
-
-> **Tip (VS Code):** To *see* `~/netscope_build` from VS Code, use the **WSL** extension → **WSL: Open Folder** and open `/home/<you>/netscope_build`. On Windows Explorer you can also use `\\wsl$\Ubuntu\home\<you>\netscope_build`.
-
----
-
-## CMakeLists.txt Content explanation
-
-### `cmake_minimum_required(VERSION 3.16)`
-
-Ensures the user runs CMake 3.16 or newer so all commands work as expected.
-
-### `project(netscope_starter CXX)`
-
-* Names your project `netscope_starter`.
-* `CXX` declares you’re using C++ (so CMake sets C++ variables and toolchains).
-
-### `set(CMAKE_CXX_STANDARD 17)`
-
-Requests the C++ language standard: **C++17**.
-(Same idea as passing `-std=c++17` to `g++`.)
-
-### `set(CMAKE_CXX_STANDARD_REQUIRED ON)`
-
-Makes the standard **strict**: don’t silently fall back to an older standard.
-
-### `add_executable(decode_one src/decode_one.cpp)`
-
-* Defines a target called `decode_one` of type **executable**.
-* Tells CMake which source files belong to that target (`src/decode_one.cpp`).
-* CMake then knows how to:
-
-  1. compile that `.cpp` into an object file,
-  2. link it into a binary named `decode_one`.
-
----
-
-## Terms (quick networking glossary)
-
-* **Ethernet dst/src:** local network addresses (MAC). Switches use these on your LAN.
-* **`type=0x0800`:** the next layer is IPv4.
-* **IPv4 src/dst:** internet addresses (who’s sending / who’s receiving). Routers use these.
-* **`ttl=64`:** a hop limit so packets don’t loop forever.
-* **`proto=6`:** the next layer is TCP (17 would mean UDP).
-* **TCP src_port/dst_port:** which app on each side (54321 on your side → 80 on the server).
-* **Flags:** `SYN` means “start”, `ACK` means “I received yours”, `FIN` means “finish”, `RST` means “reset/abort”.
-
----
-
-## Next: create a capture file (PCAP) to read
-
-**Commands to be run next:**
-
-```bash
-sudo apt update
-sudo apt install -y libpcap-dev tcpdump
-sudo tcpdump -D
-sudo tcpdump -i any -c 100 '(tcp or udp) and not port 22' -w ~/sample.pcap
-ls -lh ~/sample.pcap
-```
-
-**what each line does (brief)**
-
-* `libpcap-dev` → headers/libs we’ll use to read pcap files in C++ later.
-* `tcpdump` → a tiny tool to record packets into a `.pcap` file.
-* `tcpdump -D` → shows available interfaces (just info).
-* `tcpdump -i any -c 100 ... -w ~/sample.pcap`
-
-  * `-i any` = listen on all interfaces in WSL
-  * `-c 100` = stop after 100 packets (so it finishes quickly)
-  * the filter keeps common traffic and ignores SSH
-  * `-w ~/sample.pcap` = save to your home folder
-* `ls -lh ~/sample.pcap` → confirm the file exists and size looks reasonable (tens of KB+).
-
-> **Important tip:** Capturing with `-i any` in Linux uses **Linux Cooked Capture (SLL)** link type, not Ethernet. Our simple reader expects **Ethernet**. For readable output in the next step, capture on a specific interface (e.g., `eth0`) instead:
+> If HTTPS downloads fail in WSL with `SSL certificate problem`, install CA certs:
 >
 > ```bash
-> ip -br link                     # list interfaces
-> sudo tcpdump -i eth0 -c 120 '(tcp or udp) and not port 22' -w ~/sample_eth.pcap
+> sudo apt install -y ca-certificates openssl
+> sudo update-ca-certificates
 > ```
 
 ---
 
-## Add the PCAP reader (build a second tiny program)
+## Build (out-of-source)
 
-Open your `CMakeLists.txt` and add these two lines to the end:
+> If your repo lives on a Windows drive (e.g., `E:`), generate build files **in Linux home** to avoid WSL mount quirks.
 
-```cmake
-add_executable(pcap_read src/pcap_read.cpp)
-target_link_libraries(pcap_read PRIVATE pcap)
-```
-
-Back in WSL:
+**Exact commands (as requested):**
 
 ```bash
+# To make the directory in root:
+mkdir -p ~/netscope_build
+
+# Point CMake at your repo folder (adjust the path to your repo)
 cmake /mnt/e/Coding-practice/Projects/NetScope
 cmake --build . -j
 ```
 
-then:
+If your repo is elsewhere, just replace `/mnt/e/Coding-practice/Projects/NetScope` with your path (e.g., `/home/you/NetScope`).
 
-```bash
-./pcap_read ~/sample.pcap        # if captured with -i any, may print few lines
-./pcap_read ~/sample_eth.pcap    # recommended: capture from eth0 for Ethernet frames
-```
-Great job—your reader ran perfectly. The “Processed 94 packets.” with **no lines printed** is actually a clue about *how* the capture was taken. Here’s what happened and the next tiny step.
+This builds:
 
-## Why you saw “Processed 94 packets” but no per-packet lines initally
-
-* You captured using `tcpdump -i any ... -w sample.pcap`.
-* On Linux/WSL, **`-i any` uses a special link layer** called **Linux Cooked Capture** (link type `DLT_LINUX_SLL`).
-* Our code currently assumes **Ethernet** frames (14-byte Ethernet header). With SLL, the header layout is different, so our function returns early without printing.
-
-So: the file *does* have 94 packets, but they’re SLL frames, not Ethernet frames; your decoder just doesn’t recognize that header yet.
-
-### Quick way to confirm (optional)
-
-In WSL:
-
-```bash
-file ~/sample.pcap
-```
-
-You’ll likely see: “… pcap capture file … link-type **LINUX_SLL** …”.
+* `./decode_one` (tiny demo)
+* `./netscope_cli` (the main tool)
 
 ---
 
-## What these “packets” are & who was talking
+## Quick start: capture & analyze in WSL
 
-* A **packet** is a small “envelope” of data your system sent/received while `tcpdump` was recording.
-* Since you recorded in WSL, these are mostly your **WSL instance** talking to:
-
-  * local services (e.g., DNS resolver),
-  * the Windows host or gateway (NAT),
-  * external servers you contacted during the capture window (e.g., `curl`, `ping`, background updates).
-* Because we filtered for `tcp or udp`, they’re mostly **TCP/UDP** packets (web, DNS, API calls, etc.).
-
-We’ll *see* the actual IPs once we run our reader on an Ethernet capture.
-
----
-
-## One tiny step: recapture as Ethernet (so your reader prints)
-
-Let’s capture on a **specific interface** (Ethernet-like), not `any`.
-
-1. See your interfaces:
+### 1) See your interfaces (WSL2 uses `eth0`)
 
 ```bash
 ip -br link
 ```
 
-You’ll see names like `lo` and `eth0`. We want `eth0`.
-
-2. Capture 120 packets on `eth0`:
+### 2) Start a short capture (200 TCP/UDP packets) and save it
 
 ```bash
-sudo tcpdump -i eth0 -c 120 '(tcp or udp) and not port 22' -w ~/sample_eth.pcap
+# Capture ~200 TCP/UDP packets on eth0 and save to a new file
+sudo tcpdump -i eth0 -c 200 '(tcp or udp) and not port 22' -w ~/fresh_eth.pcap
 ```
 
-Tip: while it runs, generate a bit of traffic in another terminal:
+> If you still have the legacy sample command, it’s fine to keep in README:
+>
+> ```bash
+> ./pcap_read ~/sample_eth.pcap
+> ```
+>
+> (In this modular version you’ll mainly use `netscope_cli` below.)
 
-```bash
-curl https://example.com
-ping -c 3 8.8.8.8
-```
-
-3. Run your reader on the new file:
+### 3) Analyze the capture
 
 ```bash
 cd ~/netscope_build
-./pcap_read ~/sample_eth.pcap
+./netscope_cli ~/fresh_eth.pcap --verbose   # see per-packet lines
+./netscope_cli ~/fresh_eth.pcap             # summary only
 ```
 
-✅ You should now see lines like:
+Shorthand examples:
+
+```bash
+# summary-only (default)
+./netscope_cli ~/fresh_eth.pcap
+
+# with per-packet lines
+./netscope_cli ~/fresh_eth.pcap --verbose
+
+# top 5 rows instead of 3
+./netscope_cli ~/fresh_eth.pcap --top 5
+```
+
+### 4) Generate traffic (feeds DNS + flows) — examples to run while capturing
+
+```bash
+# 1) Trigger DNS + HTTPS to popular domains
+curl -I https://www.google.com
+curl -I https://www.microsoft.com
+curl -I https://www.apple.com
+
+# 2) Download a small chunk to create more visible flow bytes (5 MB)
+curl -L https://speed.hetzner.de/100MB.bin --range 0-5242879 -o /dev/null --insecure
+
+# 3) Ping by name (creates DNS request first, then ICMP)
+ping -c 3 example.com
+
+# (Note: ICMP echo packets themselves won't appear in our TCP/UDP-only tool,
+# but the DNS lookup for 'example.com' WILL appear and feed the DNS cache.)
+```
+
+> **Tip for DNS labels in WSL:** WSL2 often proxies DNS through Windows, so UDP:53 may not appear on `eth0`.
+> To force visible DNS in WSL captures, you can use `dig` directly to a resolver while capturing:
+>
+> ```bash
+> sudo tcpdump -i eth0 -c 300 '(tcp or udp) and not port 22' -w ~/dns_test.pcap
+> # in another terminal:
+> sudo apt install -y dnsutils
+> dig A google.com @8.8.8.8
+> dig A microsoft.com @1.1.1.1
+> curl -I https://www.google.com
+> ```
+
+---
+
+## Analyze **Windows apps** (Chrome/Edge/OneDrive/etc.)
+
+1. On Windows, install **Wireshark** (includes **Npcap**).
+2. Start capture on your **Wi-Fi/Ethernet** (or **VPN**) adapter; browse/download for ~30–60s.
+3. Stop and **File → Save As…** `.pcap` to Desktop, e.g., `windows_capture.pcap`.
+4. In WSL:
+
+   ```bash
+   ./netscope_cli "/mnt/c/Users/<you>/Desktop/windows_capture.pcap" --top 5
+   ```
+
+This will include your browser/cloud-sync traffic and usually shows DNS responses, so you’ll see **IP (domain)** labels in Top Flows.
+
+---
+
+## What the report looks like (example)
 
 ```
-TCP  172.24.64.1:52344  ->  93.184.216.34:80  flags[SYN=1 ACK=0 FIN=0 RST=0]
-UDP  172.24.64.1:56789  ->  1.1.1.1:53
-...
-Processed 120 packets.
+File: dns_test.pcap  Duration: 45.12 s  Packets: 512  Parsed: 498  Total: 48.2 MB
+
+Top Talkers:
+  192.168.1.23           31.6 MB  (65.6%)
+  23.215.0.136           14.1 MB  (29.2%)
+  185.125.190.58          1.2 MB  ( 2.5%)
+
+Top Flows:
+  192.168.1.23:45306 -> 23.215.0.136 (akamaiedge.net):443 TCP    29.9 MB  (62.0%)
+  23.215.0.136:443 -> 192.168.1.23:45306 TCP                     12.7 MB  (26.3%)
+
+Verdict:
+  Likely cause: Upload saturation. Local host 192.168.1.23 sent 62.0% of bytes.
+  Action: Pause cloud sync/backups for a minute, or limit upload.
 ```
 
-**How to read that:**
+---
 
-* Left side = your WSL IP/port, right side = destination IP/port.
-* `TCP flags` show handshake and connection state.
-* `UDP` lines show things like DNS queries (port 53), etc.
+## Troubleshooting
+
+* **Permission denied** running `tcpdump` → prefix commands with `sudo`.
+* **No DNS labels** → your capture didn’t include DNS responses (WSL proxy, caching, DoH/DoT).
+
+  * Capture on **Windows** with Wireshark, or use `dig @8.8.8.8` during WSL capture.
+* **HTTPS cert errors in WSL** → update CA certificates:
+
+  ```bash
+  sudo apt install -y ca-certificates openssl
+  sudo update-ca-certificates
+  ```
+* **Nothing shows** → ensure you’re capturing on the active interface (`ip -br link`), and generate traffic while capturing.
 
 ---
 
----
+## Why not just use Wireshark?
 
-## Additional tips / troubleshooting
+Wireshark is amazing but verbose. **NetScope** is:
 
-* **“Processed N packets” but no lines printed:**
-  Your capture might be **SLL** (from `-i any`), while the simple reader expects **Ethernet**. Re-capture from `eth0` as shown above.
-
-* **VS Code says `cannot open source file pcap.h`:**
-  That’s Windows IntelliSense. You’re compiling in WSL where `libpcap-dev` is installed. Use the **WSL extension** in VS Code and **Open Folder in WSL** so IntelliSense runs inside Ubuntu.
-
-* **CMake errors on `/mnt/…` paths (Operation not permitted):**
-  Generate and build in your Linux home (e.g., `~/netscope_build`) and point CMake at the Windows source path.
+* **Targeted:** only the KPIs you care about (top talkers/flows, % , verdict).
+* **Headless/scriptable:** run over SSH/CI, share a one-screen report.
+* **Educational:** small C++17 codebase that’s easy to read for interviews and learning.
 
 ---
 
-## Glossary (super short)
+## License / Credits
 
-* **Packet**: a small chunk of data with *headers* (labels) and *payload* (content).
-* **Ethernet**: local network label, includes MAC addresses.
-* **IP (IPv4)**: internet label, includes source/destination IP addresses.
-* **TCP**: connection label, includes ports and *flags* like SYN (start) and ACK (acknowledge).
-* **Big-endian**: the order used on the network; we convert numbers with `ntohs`/`ntohl` so they print correctly.
-
----
+Personal learning project inspired by classic packet analysis workflows. Uses **libpcap** for reading `.pcap` files.
